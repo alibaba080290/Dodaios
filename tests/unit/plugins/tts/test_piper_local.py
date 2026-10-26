@@ -233,3 +233,25 @@ def test_module_exposes_the_expected_provider_surface() -> None:
     """Structural TTSProvider conformance — no inheritance, so assert it."""
     for attribute in ("synthesize", "list_voices", "name", "supports_streaming"):
         assert hasattr(piper_local.PiperLocalTTS, attribute)
+
+
+def test_silent_engine_raises_instead_of_claiming_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A phonemizer failure must not report a successful silent turn."""
+
+    class SilentEngine:
+        sample_rate = 22_050
+
+        def generate(self, _text, _speaker, _speed, *, callback):
+            return _FakeAudio(seconds=0.0)
+
+    monkeypatch.setattr(
+        "dodaios.speech.local_models.bundle_present",
+        lambda _model_id, **_kw: True,
+    )
+    monkeypatch.setattr(
+        PiperLocalTTS, "_build_engine", lambda _self, _model_id: SilentEngine()
+    )
+    with pytest.raises(RuntimeError, match="generated no audio"):
+        asyncio.run(_speak(PiperLocalTTS(), "Bonjour", "fr-FR"))
