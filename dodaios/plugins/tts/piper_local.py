@@ -326,8 +326,6 @@ class PiperLocalTTS:
                     self._prosody_segments(spoken) if sherpa2 and model_language == "fr"
                     else [(spoken, 0)]
                 )
-                import sherpa_onnx
-
                 for index, (segment, pause_ms) in enumerate(segments):
                     if stopped.is_set():
                         break
@@ -344,6 +342,8 @@ class PiperLocalTTS:
                         return 1 if stopped.is_set() else 0
 
                     if sherpa2:
+                        import sherpa_onnx  # only required for real sherpa 2 engines
+
                         options = sherpa_onnx.GenerationConfig()
                         options.speed = (
                             0.80 if model_language == "fr" and self._speed == _DEFAULT_SPEED
