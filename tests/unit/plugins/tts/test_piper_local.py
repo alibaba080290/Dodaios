@@ -326,3 +326,21 @@ def test_espeak_multiple_words_remain_one_generation_segment(
     monkeypatch.setattr(piper_local.subprocess, "run", fake_run)
     groups = PiperLocalTTS._phonemize("Bonjour comment vas-tu", "fr-FR")
     assert groups == [[ord(c) for c in "bɔ̃ʒuʁkɔmɑ̃vaty"]]
+
+
+def test_french_prosody_splits_on_punctuation_not_words() -> None:
+    segments = PiperLocalTTS._prosody_segments(
+        "Bonjour, je suis Dodaios. Comment vas-tu aujourd'hui ?"
+    )
+    assert [text for text, _ in segments] == [
+        "Bonjour,",
+        "je suis Dodaios.",
+        "Comment vas-tu aujourd'hui ?",
+    ]
+    assert [pause for _, pause in segments] == [170, 310, 310]
+
+
+def test_french_prosody_never_splits_plain_text() -> None:
+    assert PiperLocalTTS._prosody_segments(
+        "La reconnaissance vocale française fonctionne"
+    ) == [("La reconnaissance vocale française fonctionne", 0)]
