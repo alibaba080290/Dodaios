@@ -40,3 +40,16 @@ required before audio generation can work.
 
 **This draft is not yet a working French Piper solution. Do not merge or
 deploy it until the missing integration and tests are completed.**
+
+## Follow-up: French catalogue registered
+
+The optional `vits-piper-fr_FR-siwis-medium` model is now indexed using the
+upstream Sherpa-ONNX model archive:
+https://k2-fsa.github.io/sherpa/onnx/tts/all/French/vits-piper-fr_FR-siwis-medium.html
+
+It is intentionally not part of the mandatory multi-language default install.
+The voice resolver can select this model for `fr-FR` after download.
+This alone does **not** produce French audio with sherpa-onnx 2.0.1: the
+phonemization interface remains unresolved.
+
+Do not claim end-to-end Piper support solely from passing mocked tests.
