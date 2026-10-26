@@ -294,7 +294,7 @@ def test_espeak_phonemizer_returns_nested_unicode_codepoints(
     def fake_run(argv, **kwargs):
         assert argv == ["espeak-ng", "-q", "-v", "fr", "--ipa", "Bonjour"]
         assert kwargs["timeout"] == 15
-        return CompletedProcess(argv, 0, stdout="bɔ̃ʒˈuʁ\\n", stderr="")
+        return CompletedProcess(argv, 0, stdout="bɔ̃ʒˈuʁ\n", stderr="")
 
     monkeypatch.setattr(piper_local.subprocess, "run", fake_run)
     actual = PiperLocalTTS._phonemize("Bonjour", "fr-FR")
