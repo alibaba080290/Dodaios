@@ -13,8 +13,9 @@ def main() -> None:
     print("GenerationConfig fields:", [x for x in dir(cfg) if not x.startswith("_")])
     print("phoneme_codepoints type:", type(cfg.phoneme_codepoints).__name__)
     try:
-        cfg.phoneme_codepoints = [ord("b"), ord("ɔ̃"), ord("ʒ"), ord("u"), ord("ʁ")]
+        cfg.phoneme_codepoints = [ord(ch) for ch in "bɔ̃ʒuʁ"]
         print("codepoint assignment: accepted", cfg.phoneme_codepoints)
+        print("round trip:", "".join(map(chr, cfg.phoneme_codepoints)))
     except (TypeError, ValueError, AttributeError) as exc:
         print("codepoint assignment rejected:", exc)
     for directory in sorted(root.glob("vits-piper-*")):
