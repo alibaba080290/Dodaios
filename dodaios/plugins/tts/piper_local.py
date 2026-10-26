@@ -346,7 +346,7 @@ class PiperLocalTTS:
 
                         options = sherpa_onnx.GenerationConfig()
                         options.speed = (
-                            0.80 if model_language == "fr" and self._speed == _DEFAULT_SPEED
+                            0.90 if model_language == "fr" and self._speed == _DEFAULT_SPEED
                             else self._speed
                         )
                         options.phoneme_codepoints = self._phonemize(
