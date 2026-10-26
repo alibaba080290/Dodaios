@@ -40,6 +40,7 @@ class _FakeEngine:
 def all_voices_installed(monkeypatch: pytest.MonkeyPatch) -> dict[str, _FakeEngine]:
     """Pretend every catalogued voice is downloaded, with fake engines."""
     engines: dict[str, _FakeEngine] = {}
+    monkeypatch.setattr(piper_local, "package_version", lambda _name: "1.12.0")
 
     monkeypatch.setattr(
         "dodaios.speech.local_models.bundle_present",
@@ -191,6 +192,7 @@ def test_callback_capable_engine_yields_incremental_audio(
         "_build_engine",
         lambda _self, _model_id: StreamingEngine(),
     )
+    monkeypatch.setattr(piper_local, "package_version", lambda _name: "1.12.0")
     tts = PiperLocalTTS()
 
     async def collect() -> list[bytes]:
@@ -253,6 +255,7 @@ def test_silent_engine_raises_instead_of_claiming_success(
     monkeypatch.setattr(
         PiperLocalTTS, "_build_engine", lambda _self, _model_id: SilentEngine()
     )
+    monkeypatch.setattr(piper_local, "package_version", lambda _name: "1.12.0")
     with pytest.raises(RuntimeError, match="generated no audio"):
         asyncio.run(_speak(PiperLocalTTS(), "Bonjour", "fr-FR"))
 
@@ -279,3 +282,28 @@ def test_french_request_selects_siwis_when_present(
     )
     tts = PiperLocalTTS()
     assert tts._resolve_voice(None, "fr-FR") == model
+
+
+def test_espeak_phonemizer_returns_nested_unicode_codepoints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from subprocess import CompletedProcess
+
+    monkeypatch.setattr(piper_local.shutil, "which", lambda name: "/usr/bin/espeak-ng")
+
+    def fake_run(argv, **kwargs):
+        assert argv == ["espeak-ng", "-q", "-v", "fr", "--ipa", "Bonjour"]
+        assert kwargs["timeout"] == 15
+        return CompletedProcess(argv, 0, stdout="bɔ̃ʒˈuʁ\\n", stderr="")
+
+    monkeypatch.setattr(piper_local.subprocess, "run", fake_run)
+    actual = PiperLocalTTS._phonemize("Bonjour", "fr-FR")
+    assert actual == [[ord(c) for c in "bɔ̃ʒuʁ"]]
+
+
+def test_espeak_phonemizer_requires_installed_binary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(piper_local.shutil, "which", lambda _name: None)
+    with pytest.raises(RuntimeError, match="eSpeak NG"):
+        PiperLocalTTS._phonemize("Bonjour", "fr-FR")
