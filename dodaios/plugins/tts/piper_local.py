@@ -222,16 +222,15 @@ class PiperLocalTTS:
             timeout=15,
             check=True,
         )
-        # Keep eSpeak's word boundaries as separate phoneme groups.
-        # Flattening them into one list joins adjacent words unnaturally.
-        groups = [
-            [ord(char) for char in word if char not in "ˈˌ"]
-            for word in result.stdout.split()
-        ]
-        groups = [group for group in groups if group]
-        if not groups:
+        # sherpa-onnx expects one outer group per synthesis segment.
+        # Supplying one group per word can terminate playback after the first.
+        ipa = "".join(
+            char for char in result.stdout
+            if not char.isspace() and char not in "ˈˌ"
+        )
+        if not ipa:
             raise RuntimeError("eSpeak NG did not return phonemes for Piper.")
-        return groups
+        return [[ord(char) for char in ipa]]
 
     async def _engine_for(self, model_id: str) -> Any:
         engine = self._engines.get(model_id)
