@@ -307,3 +307,24 @@ def test_espeak_phonemizer_requires_installed_binary(
     monkeypatch.setattr(piper_local.shutil, "which", lambda _name: None)
     with pytest.raises(RuntimeError, match="eSpeak NG"):
         PiperLocalTTS._phonemize("Bonjour", "fr-FR")
+
+
+def test_espeak_preserves_word_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from subprocess import CompletedProcess
+
+    monkeypatch.setattr(piper_local.shutil, "which", lambda _name: "/usr/bin/espeak-ng")
+
+    def fake_run(argv, **kwargs):
+        return CompletedProcess(
+            argv, 0, stdout="bɔ̃ʒˈuʁ\nkɔmˌɑ̃ vˈaty", stderr=""
+        )
+
+    monkeypatch.setattr(piper_local.subprocess, "run", fake_run)
+    groups = PiperLocalTTS._phonemize("Bonjour comment vas-tu", "fr-FR")
+    assert groups == [
+        [ord(c) for c in "bɔ̃ʒuʁ"],
+        [ord(c) for c in "kɔmɑ̃"],
+        [ord(c) for c in "vaty"],
+    ]
