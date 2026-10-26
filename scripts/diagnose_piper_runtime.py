@@ -27,7 +27,7 @@ def main() -> int:
 
     for name in (
         "OfflineTts",
-        "OfflineTtsGenerationConfig",
+        "GenerationConfig",
         "OfflineTtsVitsModelConfig",
     ):
         obj = getattr(sherpa_onnx, name, None)
@@ -42,8 +42,14 @@ def main() -> int:
             method = getattr(obj, "generate", None)
             if method is not None:
                 print("generate docstring:", inspect.getdoc(method) or "<none>")
-        elif name == "OfflineTtsGenerationConfig":
+        elif name == "GenerationConfig":
             print("generation config documentation:", inspect.getdoc(obj) or "<none>")
+            try:
+                instance = obj()
+                print("fields:", [x for x in dir(instance) if not x.startswith("_")])
+                print("phoneme_codepoints value:", getattr(instance, "phoneme_codepoints", "<absent>"))
+            except (TypeError, ValueError, RuntimeError) as exc:
+                print("cannot construct GenerationConfig:", exc)
             print(
                 "phoneme_codepoints field:",
                 hasattr(obj, "phoneme_codepoints")
