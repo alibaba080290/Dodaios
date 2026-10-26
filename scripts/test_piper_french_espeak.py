@@ -69,7 +69,8 @@ def main() -> int:
     )
     cfg = sherpa_onnx.GenerationConfig()
     cfg.phoneme_codepoints = [[ord(ch) for ch in ipa]]
-    print("Generating...", flush=True)
+    cfg.speed = 0.85  # slower speech than default 1.0; listening test
+    print("Generating at speed 0.85...", flush=True)
     audio = engine.generate(text, cfg)
     samples = np.asarray(audio.samples, dtype=np.float32)
     rate = int(audio.sample_rate)
