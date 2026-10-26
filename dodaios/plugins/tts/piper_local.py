@@ -213,6 +213,8 @@ class PiperLocalTTS:
         """
         language = language_code.lower().replace("_", "-")
         voice_language = language.split("-", 1)[0]
+        if shutil.which("espeak-ng") is None:
+            raise RuntimeError("eSpeak NG is required for local Piper TTS.")
         result = subprocess.run(  # noqa: S603 - fixed executable and arguments
             ["espeak-ng", "-q", "-v", voice_language, "--ipa", text],
             capture_output=True,
@@ -303,7 +305,13 @@ class PiperLocalTTS:
                         import sherpa_onnx
 
                         options = sherpa_onnx.GenerationConfig()
-                        options.speed = self._speed
+                        # Preserve configured speeds for other languages; French
+                        # Siwis uses the validated 0.80 rate by default.
+                        effective_speed = (
+                            0.80 if model_language == "fr" and self._speed == _DEFAULT_SPEED
+                            else self._speed
+                        )
+                        options.speed = effective_speed
                         options.phoneme_codepoints = self._phonemize(
                             spoken, model_language
                         )
