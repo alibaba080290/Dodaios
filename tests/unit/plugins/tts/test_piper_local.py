@@ -255,3 +255,27 @@ def test_silent_engine_raises_instead_of_claiming_success(
     )
     with pytest.raises(RuntimeError, match="generated no audio"):
         asyncio.run(_speak(PiperLocalTTS(), "Bonjour", "fr-FR"))
+
+
+def test_french_siwis_is_catalogued_but_not_downloaded_by_default() -> None:
+    from dodaios.speech.local_models import PIPER_DEFAULT_VOICES, SHERPA_BUNDLES
+
+    model = "vits-piper-fr_FR-siwis-medium"
+    assert SHERPA_BUNDLES[model].language == "fr"
+    assert SHERPA_BUNDLES[model].gender == "feminine"
+    assert SHERPA_BUNDLES[model].archive_url.endswith(
+        "vits-piper-fr_FR-siwis-medium.tar.bz2"
+    )
+    assert model not in PIPER_DEFAULT_VOICES
+
+
+def test_french_request_selects_siwis_when_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = "vits-piper-fr_FR-siwis-medium"
+    monkeypatch.setattr(
+        "dodaios.speech.local_models.bundle_present",
+        lambda model_id, **_kw: model_id == model,
+    )
+    tts = PiperLocalTTS()
+    assert tts._resolve_voice(None, "fr-FR") == model
