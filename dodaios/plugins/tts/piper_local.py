@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -232,6 +233,24 @@ class PiperLocalTTS:
             raise RuntimeError("eSpeak NG did not return phonemes for Piper.")
         return [[ord(char) for char in ipa]]
 
+    @staticmethod
+    def _prosody_segments(text: str) -> list[tuple[str, int]]:
+        """Split on clause punctuation; delay is milliseconds AFTER segment.
+
+        Never split on whitespace: sherpa 2 needs one phoneme group per
+        generated clause, not one group per individual word.
+        """
+        parts = re.findall(r"[^,;:!?。！？.]+[,;:!?。！？.]?|[^,;:!?。！？.]+$", text)
+        segments: list[tuple[str, int]] = []
+        for part in parts:
+            chunk = part.strip()
+            if not chunk:
+                continue
+            punctuation = chunk[-1]
+            pause = 310 if punctuation in ".!?。！？" else 170 if punctuation in ",;:" else 0
+            segments.append((chunk, pause))
+        return segments or [(text, 0)]
+
     async def _engine_for(self, model_id: str) -> Any:
         engine = self._engines.get(model_id)
         if engine is not None:
@@ -302,53 +321,77 @@ class PiperLocalTTS:
 
         def _generate() -> None:
             try:
-                try:
-                    if int(package_version("sherpa-onnx").split(".", 1)[0]) >= 2:
-                        import sherpa_onnx
+                sherpa2 = int(package_version("sherpa-onnx").split(".", 1)[0]) >= 2
+                segments = (
+                    self._prosody_segments(spoken) if sherpa2 and model_language == "fr"
+                    else [(spoken, 0)]
+                )
+                import sherpa_onnx
 
+                for index, (segment, pause_ms) in enumerate(segments):
+                    if stopped.is_set():
+                        break
+                    before = emitted.is_set()
+                    segment_emitted = threading.Event()
+
+                    def segment_callback(samples: Any, progress: float) -> int:
+                        data = _pcm(samples)
+                        if data:
+                            emitted.set()
+                            segment_emitted.set()
+                            if not _put(data):
+                                return 1
+                        return 1 if stopped.is_set() else 0
+
+                    if sherpa2:
                         options = sherpa_onnx.GenerationConfig()
-                        # Preserve configured speeds for other languages; French
-                        # Siwis uses the validated 0.80 rate by default.
-                        effective_speed = (
+                        options.speed = (
                             0.80 if model_language == "fr" and self._speed == _DEFAULT_SPEED
                             else self._speed
                         )
-                        options.speed = effective_speed
                         options.phoneme_codepoints = self._phonemize(
-                            spoken, model_language
+                            segment, model_language
                         )
-                        audio = engine.generate(spoken, options, callback=_callback)
+                        try:
+                            audio = engine.generate(segment, options, callback=segment_callback)
+                        except TypeError as exc:
+                            if not any(m in str(exc).lower() for m in (
+                                "callback", "incompatible function arguments", "unexpected keyword"
+                            )):
+                                raise
+                            audio = engine.generate(segment, options)
                     else:
-                        audio = engine.generate(
-                            spoken, 0, self._speed, callback=_callback
+                        try:
+                            audio = engine.generate(
+                                segment, 0, self._speed, callback=segment_callback
+                            )
+                        except TypeError as exc:
+                            if not any(m in str(exc).lower() for m in (
+                                "callback", "incompatible function arguments", "unexpected keyword"
+                            )):
+                                raise
+                            audio = engine.generate(segment, 0, self._speed)
+
+                    if not sample_rate:
+                        rate = int(getattr(audio, "sample_rate", 0) or 0)
+                        if rate:
+                            nonlocal_rate[0] = rate
+                    if not segment_emitted.is_set():
+                        data = _pcm(getattr(audio, "samples", ()))
+                        if data:
+                            emitted.set()
+                            segment_emitted.set()
+                            _put(data)
+                    if not segment_emitted.is_set():
+                        raise RuntimeError(
+                            f"Local Piper voice '{model_id}' generated no audio for segment {index + 1}."
                         )
-                except TypeError as exc:
-                    # Older sherpa-onnx builds and lightweight test engines do
-                    # not expose the callback overload. Keep the compatible
-                    # whole-sentence path instead of failing silent.
-                    detail = str(exc).lower()
-                    if not any(
-                        marker in detail
-                        for marker in (
-                            "callback",
-                            "incompatible function arguments",
-                            "unexpected keyword",
-                        )
-                    ):
-                        raise
-                    if int(package_version("sherpa-onnx").split(".", 1)[0]) >= 2:
-                        audio = engine.generate(spoken, options)
-                    else:
-                        audio = engine.generate(spoken, 0, self._speed)
-                if not sample_rate:
-                    rate = int(getattr(audio, "sample_rate", 0) or 0)
-                    if rate:
-                        nonlocal_rate[0] = rate
-                if not emitted.is_set():
-                    data = _pcm(getattr(audio, "samples", ()))
-                    if data:
-                        emitted.set()
-                        _put(data)
+                    # Pauses between completed clauses only; trailing pause is unnecessary.
+                    if index + 1 < len(segments) and pause_ms and not stopped.is_set():
+                        rate = nonlocal_rate[0] or int(getattr(engine, "sample_rate", 0) or 0)
+                        if rate <= 0:
+                            raise RuntimeError("Cannot insert speech pause without sample rate.")
+                        _put(bytes(int(rate * pause_ms / 1000) * 2))
             except Exception as exc:  # noqa: BLE001 - forwarded to async owner
                 failure.append(exc)
             finally:
