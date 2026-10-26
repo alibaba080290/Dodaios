@@ -27,10 +27,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import queue
+import shutil
+import subprocess
 import threading
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from pathlib import Path
+from importlib.metadata import version as package_version
 from typing import Any
 
 import numpy as np
@@ -177,22 +180,13 @@ class PiperLocalTTS:
                 f"{', '.join(missing)}). Download it from the API-Keys view."
             )
 
-        # sherpa-onnx 2 removed embedded eSpeak / piper-phonemize.
-        # The old data_dir alone no longer produces phonemes. Give an
-        # actionable error rather than a successful-looking silent test.
-        from importlib.metadata import version as package_version
-
-        installed_version = package_version("sherpa-onnx")
-        major = int(installed_version.split(".", 1)[0])
-        lexicon = onnx.parent / "lexicon.txt"
-        if major >= 2 and not lexicon.is_file():
-            raise RuntimeError(
-                "Piper voice cannot synthesize with sherpa-onnx "
-                f"{installed_version}: its embedded eSpeak phonemizer was "
-                "removed and this voice has no lexicon.txt. "
-                "A compatible text frontend is required. Do not downgrade "
-                "sherpa-onnx in place while Nemotron uses the same runtime."
-            )
+        # sherpa-onnx >= 2.0 needs explicit phonemes for legacy Piper voices.
+        if int(package_version("sherpa-onnx").split(".", 1)[0]) >= 2:
+            if shutil.which("espeak-ng") is None:
+                raise RuntimeError(
+                    "Piper with sherpa-onnx 2 requires eSpeak NG for "
+                    "text phonemization. Install espeak-ng to enable local TTS."
+                )
 
         log.info("Loading local Piper voice %s", model_id)
         config = sherpa_onnx.OfflineTtsConfig(
@@ -209,6 +203,30 @@ class PiperLocalTTS:
             ),
         )
         return sherpa_onnx.OfflineTts(config)
+
+    @staticmethod
+    def _phonemize(text: str, language_code: str) -> list[list[int]]:
+        """Run an external eSpeak NG frontend for sherpa-onnx 2.x.
+
+        Reject unknown IPA characters rather than emitting silent audio.
+        This synchronous helper runs in the existing synthesis worker thread.
+        """
+        language = language_code.lower().replace("_", "-")
+        voice_language = language.split("-", 1)[0]
+        result = subprocess.run(  # noqa: S603 - fixed executable and arguments
+            ["espeak-ng", "-q", "-v", voice_language, "--ipa", text],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=True,
+        )
+        ipa = "".join(
+            char for char in result.stdout
+            if not char.isspace() and char not in "ˈˌ"
+        )
+        if not ipa:
+            raise RuntimeError("eSpeak NG did not return phonemes for Piper.")
+        return [[ord(char) for char in ipa]]
 
     async def _engine_for(self, model_id: str) -> Any:
         engine = self._engines.get(model_id)
@@ -240,6 +258,9 @@ class PiperLocalTTS:
                 "voice output to a provider you have a key for."
             )
         engine = await self._engine_for(model_id)
+        from dodaios.speech.local_models import SHERPA_BUNDLES
+
+        model_language = SHERPA_BUNDLES[model_id].language
         sample_rate = int(getattr(engine, "sample_rate", 0) or 0)
         chunks: queue.Queue[bytes | object] = queue.Queue(maxsize=8)
         end = object()
@@ -278,9 +299,19 @@ class PiperLocalTTS:
         def _generate() -> None:
             try:
                 try:
-                    audio = engine.generate(
-                        spoken, 0, self._speed, callback=_callback
-                    )
+                    if int(package_version("sherpa-onnx").split(".", 1)[0]) >= 2:
+                        import sherpa_onnx
+
+                        options = sherpa_onnx.GenerationConfig()
+                        options.speed = self._speed
+                        options.phoneme_codepoints = self._phonemize(
+                            spoken, model_language
+                        )
+                        audio = engine.generate(spoken, options, callback=_callback)
+                    else:
+                        audio = engine.generate(
+                            spoken, 0, self._speed, callback=_callback
+                        )
                 except TypeError as exc:
                     # Older sherpa-onnx builds and lightweight test engines do
                     # not expose the callback overload. Keep the compatible
@@ -295,7 +326,10 @@ class PiperLocalTTS:
                         )
                     ):
                         raise
-                    audio = engine.generate(spoken, 0, self._speed)
+                    if int(package_version("sherpa-onnx").split(".", 1)[0]) >= 2:
+                        audio = engine.generate(spoken, options)
+                    else:
+                        audio = engine.generate(spoken, 0, self._speed)
                 if not sample_rate:
                     rate = int(getattr(audio, "sample_rate", 0) or 0)
                     if rate:
