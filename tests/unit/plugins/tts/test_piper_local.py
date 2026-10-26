@@ -309,9 +309,11 @@ def test_espeak_phonemizer_requires_installed_binary(
         PiperLocalTTS._phonemize("Bonjour", "fr-FR")
 
 
-def test_espeak_preserves_word_boundaries(
+
+def test_espeak_multiple_words_remain_one_generation_segment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Sherpa expects one outer group for a full text synthesis segment."""
     from subprocess import CompletedProcess
 
     monkeypatch.setattr(piper_local.shutil, "which", lambda _name: "/usr/bin/espeak-ng")
@@ -323,8 +325,4 @@ def test_espeak_preserves_word_boundaries(
 
     monkeypatch.setattr(piper_local.subprocess, "run", fake_run)
     groups = PiperLocalTTS._phonemize("Bonjour comment vas-tu", "fr-FR")
-    assert groups == [
-        [ord(c) for c in "bɔ̃ʒuʁ"],
-        [ord(c) for c in "kɔmɑ̃"],
-        [ord(c) for c in "vaty"],
-    ]
+    assert groups == [[ord(c) for c in "bɔ̃ʒuʁkɔmɑ̃vaty"]]
