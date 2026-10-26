@@ -177,6 +177,23 @@ class PiperLocalTTS:
                 f"{', '.join(missing)}). Download it from the API-Keys view."
             )
 
+        # sherpa-onnx 2 removed embedded eSpeak / piper-phonemize.
+        # The old data_dir alone no longer produces phonemes. Give an
+        # actionable error rather than a successful-looking silent test.
+        from importlib.metadata import version as package_version
+
+        installed_version = package_version("sherpa-onnx")
+        major = int(installed_version.split(".", 1)[0])
+        lexicon = onnx.parent / "lexicon.txt"
+        if major >= 2 and not lexicon.is_file():
+            raise RuntimeError(
+                "Piper voice cannot synthesize with sherpa-onnx "
+                f"{installed_version}: its embedded eSpeak phonemizer was "
+                "removed and this voice has no lexicon.txt. "
+                "A compatible text frontend is required. Do not downgrade "
+                "sherpa-onnx in place while Nemotron uses the same runtime."
+            )
+
         log.info("Loading local Piper voice %s", model_id)
         config = sherpa_onnx.OfflineTtsConfig(
             model=sherpa_onnx.OfflineTtsModelConfig(
@@ -316,8 +333,11 @@ class PiperLocalTTS:
             await worker
             if failure:
                 raise failure[0]
-            if not emitted.is_set() and chunks.empty():
-                log.warning("Local voice %s produced no audio for the turn.", model_id)
+            if not emitted.is_set():
+                raise RuntimeError(
+                    f"Local Piper voice '{model_id}' generated no audio. "
+                    "Check its phonemization frontend, lexicon and model."
+                )
         finally:
             stopped.set()
             if not worker.done():
