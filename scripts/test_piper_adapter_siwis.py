@@ -48,7 +48,7 @@ class IsolatedSiwis(PiperLocalTTS):
 
 
 async def run():
-    adapter = IsolatedSiwis(speed=0.80)
+    adapter = IsolatedSiwis(speed=0.90)
     chunks = []
     rate = None
     try:
