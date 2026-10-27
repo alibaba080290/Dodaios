@@ -6,6 +6,7 @@ file per turn IS the feature. Getting it wrong does not raise — it answers a
 German sentence in an English accent, which no test would notice unless it
 asks for this explicitly.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -120,9 +121,7 @@ def test_no_downloaded_voice_raises_an_actionable_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Silence is the worst possible failure for a voice — say why instead."""
-    monkeypatch.setattr(
-        "dodaios.speech.local_models.bundle_present", lambda model_id, **kw: False
-    )
+    monkeypatch.setattr("dodaios.speech.local_models.bundle_present", lambda model_id, **kw: False)
     tts = PiperLocalTTS()
 
     with pytest.raises(RuntimeError) as excinfo:
@@ -196,16 +195,49 @@ def test_callback_capable_engine_yields_incremental_audio(
     tts = PiperLocalTTS()
 
     async def collect() -> list[bytes]:
-        return [
-            chunk.pcm
-            async for chunk in tts.synthesize("Hello", language_code="en-US")
-        ]
+        return [chunk.pcm async for chunk in tts.synthesize("Hello", language_code="en-US")]
 
     chunks = asyncio.run(collect())
 
     assert PiperLocalTTS.supports_streaming is True
     assert len(chunks) == 2
     assert all(chunks)
+
+
+@pytest.mark.parametrize("version", ["1.13.4", "2.0.1"])
+def test_callback_keeps_generating_until_every_native_batch_is_consumed(monkeypatch, version):
+    import sys
+    from types import SimpleNamespace
+
+    class BatchingEngine:
+        sample_rate = 22_050
+
+        def generate(self, text, *args, callback):
+            frames = []
+            for index in range(3):
+                samples = np.full(100, 0.1 * (index + 1), dtype=np.float32)
+                frames.append(samples)
+                if callback(samples, (index + 1) / 3) == 0:
+                    break
+            return SimpleNamespace(samples=np.concatenate(frames), sample_rate=self.sample_rate)
+
+    monkeypatch.setattr(piper_local, "package_version", lambda name: version)
+    monkeypatch.setitem(
+        sys.modules, "sherpa_onnx", SimpleNamespace(GenerationConfig=SimpleNamespace)
+    )
+    monkeypatch.setattr(
+        PiperLocalTTS,
+        "_installed_voices",
+        lambda self: {
+            "vits-piper-en_US-ryan-medium": SimpleNamespace(language="en", gender="masculine"),
+        },
+    )
+    monkeypatch.setattr(PiperLocalTTS, "_build_engine", lambda self, model: BatchingEngine())
+    monkeypatch.setattr(
+        PiperLocalTTS, "_phonemize", staticmethod(lambda text, language: [[1], [2], [3]])
+    )
+    pcm = asyncio.run(_speak(PiperLocalTTS(), "First. Second. Third.", "en-US"))
+    assert len(pcm) == 600
 
 
 def test_voices_cover_every_supported_reply_language() -> None:
@@ -252,9 +284,7 @@ def test_silent_engine_raises_instead_of_claiming_success(
         "dodaios.speech.local_models.bundle_present",
         lambda _model_id, **_kw: True,
     )
-    monkeypatch.setattr(
-        PiperLocalTTS, "_build_engine", lambda _self, _model_id: SilentEngine()
-    )
+    monkeypatch.setattr(PiperLocalTTS, "_build_engine", lambda _self, _model_id: SilentEngine())
     monkeypatch.setattr(piper_local, "package_version", lambda _name: "1.12.0")
     with pytest.raises(RuntimeError, match="generated no audio"):
         asyncio.run(_speak(PiperLocalTTS(), "Bonjour", "fr-FR"))
@@ -266,9 +296,7 @@ def test_french_siwis_is_catalogued_but_not_downloaded_by_default() -> None:
     model = "vits-piper-fr_FR-siwis-medium"
     assert SHERPA_BUNDLES[model].language == "fr"
     assert SHERPA_BUNDLES[model].gender == "feminine"
-    assert SHERPA_BUNDLES[model].archive_url.endswith(
-        "vits-piper-fr_FR-siwis-medium.tar.bz2"
-    )
+    assert SHERPA_BUNDLES[model].archive_url.endswith("vits-piper-fr_FR-siwis-medium.tar.bz2")
     assert model not in PIPER_DEFAULT_VOICES
 
 
@@ -309,7 +337,6 @@ def test_espeak_phonemizer_requires_installed_binary(
         PiperLocalTTS._phonemize("Bonjour", "fr-FR")
 
 
-
 def test_espeak_multiple_words_remain_one_generation_segment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -319,9 +346,7 @@ def test_espeak_multiple_words_remain_one_generation_segment(
     monkeypatch.setattr(piper_local.shutil, "which", lambda _name: "/usr/bin/espeak-ng")
 
     def fake_run(argv, **kwargs):
-        return CompletedProcess(
-            argv, 0, stdout="bɔ̃ʒˈuʁ\nkɔmˌɑ̃ vˈaty", stderr=""
-        )
+        return CompletedProcess(argv, 0, stdout="bɔ̃ʒˈuʁ\nkɔmˌɑ̃ vˈaty", stderr="")
 
     monkeypatch.setattr(piper_local.subprocess, "run", fake_run)
     groups = PiperLocalTTS._phonemize("Bonjour comment vas-tu", "fr-FR")
@@ -341,9 +366,9 @@ def test_french_prosody_splits_on_punctuation_not_words() -> None:
 
 
 def test_french_prosody_never_splits_plain_text() -> None:
-    assert PiperLocalTTS._prosody_segments(
-        "La reconnaissance vocale française fonctionne"
-    ) == [("La reconnaissance vocale française fonctionne", 0)]
+    assert PiperLocalTTS._prosody_segments("La reconnaissance vocale française fonctionne") == [
+        ("La reconnaissance vocale française fonctionne", 0)
+    ]
 
 
 def test_french_prosody_preserves_decimal_numbers() -> None:

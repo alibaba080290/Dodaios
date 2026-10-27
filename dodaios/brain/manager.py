@@ -2010,8 +2010,9 @@ def _extract_leaked_tool_call(text: str) -> tuple[str, dict[str, Any]] | None:
 # Single source of truth for the reply-language vocabulary (Python ↔ REST ↔ TS).
 # "auto" = mirror the user's input language; the rest hard-pin that language.
 SUPPORTED_REPLY_LANGUAGES: tuple[str, ...] = ("auto", *SUPPORTED_LOCALES)
-_REPLY_LANGS: frozenset[str] = frozenset(SUPPORTED_REPLY_LANGUAGES)
-_REPLY_LANG_NAMES: dict[str, str] = dict(SUPPORTED_LANGUAGE_NAMES)
+# French speech can be pinned in configuration without adding a translated UI.
+_REPLY_LANGS: frozenset[str] = frozenset((*SUPPORTED_REPLY_LANGUAGES, "fr"))
+_REPLY_LANG_NAMES: dict[str, str] = {**SUPPORTED_LANGUAGE_NAMES, "fr": "French"}
 
 # Spoken confirmation for a deterministic reply-language switch (the
 # voice_command_gate "language_switch" path). Keyed by target code and phrased

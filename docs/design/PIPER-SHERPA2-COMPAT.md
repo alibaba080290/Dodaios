@@ -1,55 +1,67 @@
-# Piper / sherpa-onnx 2.x compatibility (WIP)
+# French local speech on BC-250
 
-## Reproduction (CachyOS x86_64, Dodaios 4.0.1)
+This branch connects local Nemotron recognition and Siwis/Piper speech output
+to the existing Claude subscription CLI for conversational responses.
+The interface does not need a French translation.
 
-- `sherpa-onnx` and `sherpa-onnx-core`: 2.0.1.
-- Voice directories: ONNX + `tokens.txt` + `espeak-ng-data`, without `lexicon.txt`.
-- Built-in German voice and English voice fail to produce audio.
-- Native log: `phoneme_codepoints is empty, no lexicon, and no frontend available`.
-- Nemotron STT works in the same runtime; downgrading sherpa globally is unsafe.
-- The four built-in Piper voices do not include French.
+## Integration
 
-## Verified upstream change
+French now survives the reply pin, brain normalization, output resolver and
+BCP-47 conversion. Piper/Sherpa 2 uses external eSpeak NG phonemes. Its callback
+returns 1 to continue and 0 to stop. Decimal punctuation is preserved.
 
-sherpa-onnx 2.0.0 removed its embedded eSpeak/piper-phonemize frontend:
+Activation selects pipeline mode, Nemotron/fr, Claude CLI and Piper/fr-FR at
+speed 0.90. Streaming TTS is disabled for this initial profile so one complete
+synthesis runs at a time. Existing microphone and playback devices are preserved.
+
+## Activate the known BC-250 installation
+
+Run as the normal desktop user:
+
+```bash
+cd /tmp/dodaios-piper-test &&
+git pull --ff-only &&
+~/.dodaios/.venv/bin/python -I scripts/enable_french_voice.py --apply
+```
+
+Without --apply, the script checks only. It requires the existing systemd user
+service, eSpeak NG and a working Claude subscription login. It refuses unknown
+installed module hashes, service EnvironmentFiles and conflicting effective
+YAML/environment settings before stopping the service.
+
+It backs up the five modified Python modules, active TOML and existing drift
+baseline, preserves native libraries, resolves model paths like the real
+launcher, reuses existing models and downloads missing speech bundles,
+including permanent Siwis. With the service stopped it validates native
+model loading and synthesis in the production interpreter, checks the real
+STT/TTS factories and starts the service.
+
+On failure it restores the backed-up files and attempts to restart the
+previously running service. Downloaded model bundles remain for retries.
+Restoration/restart failures are reported separately. Backups remain beside
+the active configuration under french-voice-backups/.
+
+Open Dodaios and start a voice conversation after activation. The script
+does not record the microphone or claim end-to-end hardware acceptance.
+
+## Validation and limits
+
+- 306 targeted tests passed for language resolution, reply-language retention,
+  Piper and activation/rollback, including callback-respecting native batching.
+- New activation/Piper code passes Ruff. Existing manager/language modules have
+  25 pre-existing Ruff findings, with no new findings introduced here.
+- Full pytest collection is blocked at tests/contract/test_agent_autonomy.py
+  by the development environment's missing mcp dependency.
+- No live BC-250 execution was available during this implementation.
+- Claude CLI uses the existing subscription and is slower to start than an API.
+  Its conversational adapter is text-only and does not itself execute tools.
+- No GPU clocks, voltages, drivers or native package versions are changed.
+  Sustained whole-application memory use remains to be observed.
+
+Sherpa 2 removed the embedded phonemizer:
 https://github.com/k2-fsa/sherpa-onnx/issues/3731
 
-The legacy `vits.data_dir` is deprecated/ignored in 2.x. An external
-phonemization frontend, passed phoneme codepoints, or a compatible lexicon is
-required before audio generation can work.
+Python callback contract for the runtime used on the BC-250:
+https://github.com/k2-fsa/sherpa-onnx/blob/v2.0.1/sherpa-onnx/python/csrc/offline-tts.cc
 
-## Scope of this initial draft
-
-- Fail early with a descriptive message if sherpa-onnx 2.x is paired with a
-  legacy Piper bundle without a lexicon.
-- Do not report success on a silent generated turn.
-- Regression test for silent synthesis.
-
-## Remaining before functional fix
-
-1. Evaluate sherpa 2.x Python generation API for phoneme-codepoint input;
-   select a properly licensed, packaged multilingual frontend.
-2. Support French `fr_FR` voice artifacts with verified URLs, checksums,
-   licensing, installation/update flows, and correct model catalog selection.
-3. Validate a French real-audio smoke test and other existing languages
-   under sherpa 2.0.1.
-4. Run tests and lint in CI and test on the target BC-250 without changing
-   the functioning Nemotron runtime.
-5. Measure sustained memory use and ensure speech models are released on
-   provider switches.
-
-**This draft is not yet a working French Piper solution. Do not merge or
-deploy it until the missing integration and tests are completed.**
-
-## Follow-up: French catalogue registered
-
-The optional `vits-piper-fr_FR-siwis-medium` model is now indexed using the
-upstream Sherpa-ONNX model archive:
-https://k2-fsa.github.io/sherpa/onnx/tts/all/French/vits-piper-fr_FR-siwis-medium.html
-
-It is intentionally not part of the mandatory multi-language default install.
-The voice resolver can select this model for `fr-FR` after download.
-This alone does **not** produce French audio with sherpa-onnx 2.0.1: the
-phonemization interface remains unresolved.
-
-Do not claim end-to-end Piper support solely from passing mocked tests.
+External eSpeak NG and voice models retain their own licenses.

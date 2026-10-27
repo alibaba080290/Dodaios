@@ -22,6 +22,7 @@ maps it to the matching voice. That mapping is the whole reason the local voice
 can honour the runtime-language doctrine instead of answering German text in an
 English accent.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -33,8 +34,8 @@ import subprocess
 import threading
 from collections.abc import AsyncIterator
 from contextlib import suppress
-from pathlib import Path
 from importlib.metadata import version as package_version
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -90,11 +91,7 @@ class PiperLocalTTS:
     def _catalog(self) -> dict[str, Any]:
         from dodaios.speech.local_models import SHERPA_BUNDLES
 
-        return {
-            model_id: bundle
-            for model_id, bundle in SHERPA_BUNDLES.items()
-            if bundle.language
-        }
+        return {model_id: bundle for model_id, bundle in SHERPA_BUNDLES.items() if bundle.language}
 
     def _installed_voices(self) -> dict[str, Any]:
         """Catalogued voices whose files are actually on this machine.
@@ -110,9 +107,7 @@ class PiperLocalTTS:
             if bundle_present(model_id)
         }
 
-    def _resolve_voice(
-        self, voice: str | None, language_code: str | None
-    ) -> str | None:
+    def _resolve_voice(self, voice: str | None, language_code: str | None) -> str | None:
         """Pick the voice for ONE turn: explicit request, else language + profile.
 
         Returns None when nothing is installed — the caller then raises the
@@ -143,9 +138,7 @@ class PiperLocalTTS:
             )
             candidates = list(installed)
         # Same speaker profile across languages where possible.
-        preferred = [
-            m for m in candidates if installed[m].gender == self._gender
-        ]
+        preferred = [m for m in candidates if installed[m].gender == self._gender]
         return (preferred or candidates)[0]
 
     def list_voices(self, language: str | None = None) -> list[str]:
@@ -169,9 +162,7 @@ class PiperLocalTTS:
         from dodaios.speech.sherpa_models import model_paths
 
         paths = model_paths(model_id)
-        onnx = next(
-            (p for name, p in paths.items() if name.endswith(".onnx")), None
-        )
+        onnx = next((p for name, p in paths.items() if name.endswith(".onnx")), None)
         tokens = paths.get("tokens.txt")
         data_dir = paths.get("espeak-ng-data")
         if onnx is None or tokens is None or data_dir is None:
@@ -227,10 +218,7 @@ class PiperLocalTTS:
         )
         # sherpa-onnx expects one outer group per synthesis segment.
         # Supplying one group per word can terminate playback after the first.
-        ipa = "".join(
-            char for char in result.stdout
-            if not char.isspace() and char not in "ˈˌ"
-        )
+        ipa = "".join(char for char in result.stdout if not char.isspace() and char not in "ˈˌ")
         if not ipa:
             raise RuntimeError("eSpeak NG did not return phonemes for Piper.")
         return [[ord(char) for char in ipa]]
@@ -242,7 +230,8 @@ class PiperLocalTTS:
         Never split on whitespace: sherpa 2 needs one phoneme group per
         generated clause, not one group per individual word.
         """
-        parts = re.findall(r"[^,;:!?。！？.]+[,;:!?。！？.]?|[^,;:!?。！？.]+$", re.sub(r"(?<=\\d)\\.(?=\\d)", "∯", text))
+        protected = re.sub(r"(?<=\d)\.(?=\d)", "∯", text)
+        parts = re.findall(r"[^,;:!?。！？.]+[,;:!?。！？.]?|[^,;:!?。！？.]+$", protected)
         segments: list[tuple[str, int]] = []
         for part in parts:
             chunk = part.replace("∯", ".").strip()
@@ -297,9 +286,7 @@ class PiperLocalTTS:
             values = np.asarray(samples, dtype=np.float32)
             if values.size == 0:
                 return b""
-            return (
-                np.clip(values, -1.0, 1.0) * _INT16_FULL_SCALE
-            ).astype(np.int16).tobytes()
+            return (np.clip(values, -1.0, 1.0) * _INT16_FULL_SCALE).astype(np.int16).tobytes()
 
         def _put(value: bytes | object) -> bool:
             while not stopped.is_set():
@@ -317,7 +304,8 @@ class PiperLocalTTS:
             try:
                 sherpa2 = int(package_version("sherpa-onnx").split(".", 1)[0]) >= 2
                 segments = (
-                    self._prosody_segments(spoken) if sherpa2 and model_language == "fr"
+                    self._prosody_segments(spoken)
+                    if sherpa2 and model_language == "fr"
                     else [(spoken, 0)]
                 )
                 for index, (segment, pause_ms) in enumerate(segments):
@@ -325,32 +313,41 @@ class PiperLocalTTS:
                         break
                     segment_emitted = threading.Event()
 
-                    def segment_callback(samples: Any, progress: float) -> int:
+                    def segment_callback(
+                        samples: Any,
+                        progress: float,
+                        segment_emitted: threading.Event = segment_emitted,
+                    ) -> int:
                         data = _pcm(samples)
                         if data:
                             emitted.set()
                             segment_emitted.set()
                             if not _put(data):
-                                return 1
-                        return 1 if stopped.is_set() else 0
+                                return 0
+                        # sherpa-onnx: 1 continues generation, 0 cancels it.
+                        return 0 if stopped.is_set() else 1
 
                     if sherpa2:
                         import sherpa_onnx  # only required for real sherpa 2 engines
 
                         options = sherpa_onnx.GenerationConfig()
                         options.speed = (
-                            0.90 if model_language == "fr" and not self._speed_explicit
+                            0.90
+                            if model_language == "fr" and not self._speed_explicit
                             else self._speed
                         )
-                        options.phoneme_codepoints = self._phonemize(
-                            segment, model_language
-                        )
+                        options.phoneme_codepoints = self._phonemize(segment, model_language)
                         try:
                             audio = engine.generate(segment, options, callback=segment_callback)
                         except TypeError as exc:
-                            if not any(m in str(exc).lower() for m in (
-                                "callback", "incompatible function arguments", "unexpected keyword"
-                            )):
+                            if not any(
+                                m in str(exc).lower()
+                                for m in (
+                                    "callback",
+                                    "incompatible function arguments",
+                                    "unexpected keyword",
+                                )
+                            ):
                                 raise
                             audio = engine.generate(segment, options)
                     else:
@@ -359,9 +356,14 @@ class PiperLocalTTS:
                                 segment, 0, self._speed, callback=segment_callback
                             )
                         except TypeError as exc:
-                            if not any(m in str(exc).lower() for m in (
-                                "callback", "incompatible function arguments", "unexpected keyword"
-                            )):
+                            if not any(
+                                m in str(exc).lower()
+                                for m in (
+                                    "callback",
+                                    "incompatible function arguments",
+                                    "unexpected keyword",
+                                )
+                            ):
                                 raise
                             audio = engine.generate(segment, 0, self._speed)
 
@@ -377,7 +379,8 @@ class PiperLocalTTS:
                             _put(data)
                     if not segment_emitted.is_set():
                         raise RuntimeError(
-                            f"Local Piper voice '{model_id}' generated no audio for segment {index + 1}."
+                            f"Local Piper voice '{model_id}' generated no audio "
+                            f"for segment {index + 1}."
                         )
                     # Pauses between completed clauses only; trailing pause is unnecessary.
                     if index + 1 < len(segments) and pause_ms and not stopped.is_set():
@@ -401,9 +404,7 @@ class PiperLocalTTS:
                 if item is end:
                     break
                 assert isinstance(item, bytes)
-                rate = nonlocal_rate[0] or int(
-                    getattr(engine, "sample_rate", 0) or 0
-                )
+                rate = nonlocal_rate[0] or int(getattr(engine, "sample_rate", 0) or 0)
                 if rate <= 0:
                     raise RuntimeError("The local voice returned no sample rate.")
                 yield AudioChunk(
