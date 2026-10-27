@@ -37,6 +37,8 @@ ORIGINAL_HASHES = {
     "dodaios/speech/local_models.py": {
         "7742c21ba39fbb52c4cb1d1ca2c539458cbcefc86a59cc9f8e7ea7749e662c29",
         "79befe1739924ca07415ed3617db21d7227206ccbe53bd3a3f015a9a62bf379f",
+        # BC-250 installation: unbounded Sherpa requirement, no French bundle.
+        "990be5320cb6109603ee23a75c3c15a1c7e75e2451f33453872c793305286faa",
     },
     "dodaios/plugins/tts/piper_local.py": {
         "5c6fbfe7690495b60b116e4ddad8f934f6ae82290f2bf275e82501a2c3734ddd",

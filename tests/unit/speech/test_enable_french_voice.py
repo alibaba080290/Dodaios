@@ -46,6 +46,34 @@ def test_unknown_code_is_refused_before_any_file_changes(tmp_path):
     assert all(p.read_text() == "unrecognized installed code" for p in target.rglob("*.py"))
 
 
+@pytest.mark.parametrize("modified", [False, True])
+def test_reported_bc250_catalog_is_accepted_without_accepting_other_edits(tmp_path, modified):
+    """Reproduce the installed catalog from the user's complete unified diff."""
+    m = module()
+    target = tmp_path / "installed"
+    for relative in m.ORIGINAL_HASHES:
+        path = target / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes((m.ROOT / relative).read_bytes())
+    catalog = target / "dodaios/speech/local_models.py"
+    text = catalog.read_text()
+    start = text.index("    # French is opt-in until")
+    end = text.index('    "vits-piper-de_DE-ramona-low":', start)
+    text = (text[:start] + text[end:]).replace(
+        'SHERPA_ONNX_PACKAGE = "sherpa-onnx>=1.13.3,<2"',
+        'SHERPA_ONNX_PACKAGE = "sherpa-onnx>=1.13.3"',
+    )
+    if modified:
+        text += "\n# Unreviewed local change\n"
+    catalog.write_text(text)
+    if modified:
+        with pytest.raises(RuntimeError, match="unrecognized.*local_models"):
+            m.validate_overlay(m.ROOT, target)
+    else:
+        m.validate_overlay(m.ROOT, target)
+    assert catalog.read_text() == text
+
+
 def test_restore_recovers_original_bytes_and_permissions(tmp_path):
     m = module()
     target = tmp_path / "config.toml"
