@@ -69,7 +69,7 @@ class PiperLocalTTS:
         voice: str | None = None,
         gender: str | None = None,
         num_threads: int = 2,
-        speed: float = _DEFAULT_SPEED,
+        speed: float | None = None,
     ) -> None:
         self._preferred_voice = (voice or "").strip() or None
         # Voice PROFILE rather than a single voice id: the pipeline may switch
@@ -78,11 +78,13 @@ class PiperLocalTTS:
         # the BUG-086 complaint in a different provider.
         self._gender = (gender or "").strip().lower() or "masculine"
         self._num_threads = max(1, int(num_threads))
-        self._speed = float(speed) if speed and speed > 0 else _DEFAULT_SPEED
+        self._speed = float(speed) if speed is not None and speed > 0 else _DEFAULT_SPEED
+        self._speed_explicit = speed is not None
         #: model_id -> loaded engine. Voices load lazily and stay cached; a
         #: German-only conversation never pays for the Spanish voice.
         self._engines: dict[str, Any] = {}
         self._load_lock = asyncio.Lock()
+        self._workers: set[asyncio.Task[Any]] = set()
 
     # -- voice selection ----------------------------------------------------
     def _catalog(self) -> dict[str, Any]:
@@ -240,10 +242,10 @@ class PiperLocalTTS:
         Never split on whitespace: sherpa 2 needs one phoneme group per
         generated clause, not one group per individual word.
         """
-        parts = re.findall(r"[^,;:!?。！？.]+[,;:!?。！？.]?|[^,;:!?。！？.]+$", text)
+        parts = re.findall(r"[^,;:!?。！？.]+[,;:!?。！？.]?|[^,;:!?。！？.]+$", re.sub(r"(?<=\\d)\\.(?=\\d)", "∯", text))
         segments: list[tuple[str, int]] = []
         for part in parts:
-            chunk = part.strip()
+            chunk = part.replace("∯", ".").strip()
             if not chunk:
                 continue
             punctuation = chunk[-1]
@@ -309,14 +311,6 @@ class PiperLocalTTS:
                     continue
             return False
 
-        def _callback(samples: Any, _progress: float) -> int:
-            data = _pcm(samples)
-            if data:
-                emitted.set()
-                if not _put(data):
-                    return 1
-            return 1 if stopped.is_set() else 0
-
         nonlocal_rate = [sample_rate]
 
         def _generate() -> None:
@@ -329,7 +323,6 @@ class PiperLocalTTS:
                 for index, (segment, pause_ms) in enumerate(segments):
                     if stopped.is_set():
                         break
-                    before = emitted.is_set()
                     segment_emitted = threading.Event()
 
                     def segment_callback(samples: Any, progress: float) -> int:
@@ -346,7 +339,7 @@ class PiperLocalTTS:
 
                         options = sherpa_onnx.GenerationConfig()
                         options.speed = (
-                            0.90 if model_language == "fr" and self._speed == _DEFAULT_SPEED
+                            0.90 if model_language == "fr" and not self._speed_explicit
                             else self._speed
                         )
                         options.phoneme_codepoints = self._phonemize(
@@ -398,6 +391,8 @@ class PiperLocalTTS:
                 _put(end)
 
         worker = asyncio.create_task(asyncio.to_thread(_generate), name="piper-tts")
+        self._workers.add(worker)
+        worker.add_done_callback(self._workers.discard)
         self.last_voice = model_id
         self.last_voice_provider = self.name
         try:
@@ -448,6 +443,10 @@ class PiperLocalTTS:
 
     async def aclose(self) -> None:
         """Drop the loaded voices so a switched-away provider frees its memory."""
+        # Native generation must finish before releasing engine references.
+        # A cancelled caller may have left the worker draining in the background.
+        if self._workers:
+            await asyncio.gather(*tuple(self._workers), return_exceptions=True)
         self._engines.clear()
 
 
