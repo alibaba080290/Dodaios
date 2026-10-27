@@ -344,3 +344,34 @@ def test_french_prosody_never_splits_plain_text() -> None:
     assert PiperLocalTTS._prosody_segments(
         "La reconnaissance vocale française fonctionne"
     ) == [("La reconnaissance vocale française fonctionne", 0)]
+
+
+def test_french_prosody_preserves_decimal_numbers() -> None:
+    segments = PiperLocalTTS._prosody_segments("La valeur est 3.14, puis 2.5.")
+    assert [part for part, _ in segments] == ["La valeur est 3.14,", "puis 2.5."]
+
+
+def test_default_and_explicit_speeds_are_distinct() -> None:
+    default = PiperLocalTTS()
+    explicit = PiperLocalTTS(speed=1.0)
+    assert default._speed_explicit is False
+    assert explicit._speed_explicit is True
+    assert explicit._speed == 1.0
+
+
+def test_aclose_waits_for_active_native_workers() -> None:
+    async def scenario() -> None:
+        tts = PiperLocalTTS()
+        finished = asyncio.Event()
+
+        async def slow_native_worker() -> None:
+            await asyncio.sleep(0.025)
+            finished.set()
+
+        worker = asyncio.create_task(slow_native_worker())
+        tts._workers.add(worker)
+        await tts.aclose()
+        assert finished.is_set()
+        assert worker.done()
+
+    asyncio.run(scenario())
