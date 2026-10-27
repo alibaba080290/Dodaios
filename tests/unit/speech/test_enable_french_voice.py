@@ -133,3 +133,70 @@ def test_rollback_restores_files_even_if_stopping_the_service_times_out(tmp_path
     message = m.rollback(saved, active=False, env={}, working=tmp_path)
     assert config.read_bytes() == b"original"
     assert "restored" in message
+
+
+@pytest.mark.parametrize("token", [None, "test-private-control-key"])
+def test_readiness_check_waits_for_the_actual_http_voice_status(token):
+    import http.server
+    import threading
+
+    m = module()
+    seen = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append(self.path)
+            if token and self.headers.get("Authorization") != f"Bearer {token}":
+                self.send_response(401)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"ready":false}' if len(seen) == 1 else b'{"ready":true}')
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        m.wait_for_voice_ready(f"http://127.0.0.1:{server.server_port}", timeout=2, token=token)
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join()
+    assert seen == ["/api/voice/status", "/api/voice/status"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", ["Bonjour.", ""])
+async def test_activation_checks_the_routed_subscription_answer(monkeypatch, answer):
+    from dodaios.brain.provider_registry import BrainProviderRegistry
+    from dodaios.core.config import JarvisConfig
+    from dodaios.core.protocols import BrainDelta
+    from dodaios.plugins.brain.claude_cli import ClaudeCliBrain
+
+    m = module()
+    calls = []
+
+    class Subscription(ClaudeCliBrain):
+        async def complete(self, request):
+            calls.append(request)
+            yield BrainDelta(content=answer)
+
+    def load(self):
+        self._classes = {"claude-cli": Subscription}
+        self._loaded = True
+
+    monkeypatch.setattr(BrainProviderRegistry, "_load", load)
+    monkeypatch.setattr("dodaios.core.config.get_secret_any", lambda _: None)
+    config = JarvisConfig()
+    config.brain.primary = "claude-cli"
+    if answer:
+        await m.check_brain(config)
+    else:
+        with pytest.raises(RuntimeError, match="no answer"):
+            await m.check_brain(config)
+    assert len(calls) == 1
+    assert calls[0].tools == ()

@@ -2,7 +2,7 @@
 """Activate the tested French voice path on a known Dodaios Linux installation.
 
 Run with the production venv and -I. Default: read-only checks. --apply backs up
-the five patched modules and configuration, stops the user service, validates
+the patched modules and configuration, stops the user service, validates
 the native engines, configures French and starts the service. No pip changes.
 Unknown installed source or conflicting service overrides are refused.
 """
@@ -19,6 +19,9 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -29,7 +32,8 @@ ORIGINAL_HASHES = {
         "22a4486b62c7667184f1221e381a44ed06dcafa438522c3cf6cd468b36cf98f2"
     },
     "dodaios/brain/manager.py": {
-        "e5bf6ac8f210ac7a7e6517687e738c4aa00c7f72c0759a535bb160fca63caf47"
+        "e5bf6ac8f210ac7a7e6517687e738c4aa00c7f72c0759a535bb160fca63caf47",
+        "3b17d9c3e4dc4ee7931f3e8dbfd72187ac6aa37afd5711b3a030ba808bb1e3f3",
     },
     "dodaios/speech/pipeline.py": {
         "4a3402b8e1c9bf489f7864dbcf3756555463cfa219081d68fdd6a42671761d48"
@@ -43,6 +47,15 @@ ORIGINAL_HASHES = {
     "dodaios/plugins/tts/piper_local.py": {
         "5c6fbfe7690495b60b116e4ddad8f934f6ae82290f2bf275e82501a2c3734ddd",
         "c97182528821a7768fd539d091878a337e49e35a3eb4a16a8033a4112e53fe38",
+    },
+    "dodaios/browser_voice/route.py": {
+        "46b5e0a3887f5b3c89290044ba06aed794512b7e65fe0a9789f8b887900dc1d3"
+    },
+    "dodaios/browser_voice/session.py": {
+        "bbf531be349451f21585ba73fc93dd5e7c1d9aa19e666ee00a101f42235aaf1a"
+    },
+    "dodaios/ui/web/launcher.py": {
+        "40a05aa2a8b77ff3822a249a36e01ed4ccfd12afd250f249f35a53b36f4fadac"
     },
 }
 PROFILE = {
@@ -219,6 +232,7 @@ def service_context() -> tuple[dict[str, str], Path]:
 
 def probe() -> dict[str, str]:
     import dodaios
+    from dodaios.brain.provider_registry import BrainProviderRegistry
     from dodaios.core.config import ensure_project_root_cwd, resolve_config_path
     from dodaios.core.config_writer import _config_soll_path
     from dodaios.plugins.brain.claude_cli import ClaudeCliBrain
@@ -230,6 +244,8 @@ def probe() -> dict[str, str]:
         raise RuntimeError("eSpeak NG is missing")
     if not ClaudeCliBrain.subscription_connected():
         raise RuntimeError("Claude subscription login is unavailable")
+    if "claude-cli" not in BrainProviderRegistry().available():
+        raise RuntimeError("The installed Claude subscription provider is not registered.")
     config = resolve_config_path().resolve()
     if not config.is_file():
         raise RuntimeError("The active Dodaios configuration is missing.")
@@ -275,10 +291,55 @@ async def native_check(data_dir: str) -> None:
         await recognizer.aclose()
 
 
+async def check_brain(config) -> None:
+    from dodaios.brain.manager import BrainManager
+    from dodaios.core.bus import EventBus
+    from dodaios.core.protocols import BrainMessage, BrainRequest
+
+    manager = BrainManager.from_tier_config(
+        "router", config=config, bus=EventBus(),
+        provider_override=config.brain.primary, tools={},
+    )
+    chain = manager._build_fallback_chain("fast")
+    if not chain or chain[0][0] != "claude-cli":
+        raise RuntimeError("The configured brain route does not reach Claude CLI.")
+    provider, model = chain[0]
+    brain = manager._get_brain(provider, model)
+    request = BrainRequest(
+        messages=(BrainMessage(role="user", content="Dis simplement bonjour en français."),),
+        system="Réponds uniquement en français, en une courte phrase, sans outil.",
+        max_tokens=100,
+    )
+    parts = [delta.content or "" async for delta in brain.complete(request)]
+    if not "".join(parts).strip():
+        raise RuntimeError("The routed Claude subscription returned no answer.")
+
+
+def wait_for_voice_ready(url: str, *, timeout: float = 90, token: str | None = None) -> None:
+    deadline = time.monotonic() + timeout
+    # The installed backend is loopback; inherited proxy settings must not
+    # redirect this local readiness check to an external service.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    request = urllib.request.Request(  # noqa: S310 -- worker constructs a loopback HTTP URL
+        f"{url}/api/voice/status", headers=headers
+    )
+    while time.monotonic() < deadline:
+        try:
+            with opener.open(request, timeout=2) as response:
+                if json.load(response).get("ready") is True:
+                    return
+        except (OSError, ValueError, urllib.error.URLError):
+            pass
+        time.sleep(0.25)
+    raise RuntimeError("The restarted backend did not confirm voice readiness.")
+
+
 def finish(info: dict[str, str]) -> None:
     import asyncio
 
     from dodaios.brain.manager import normalize_reply_language
+    from dodaios.browser_voice.route import _resolve_language
     from dodaios.core.config import ensure_project_root_cwd, load_config
     from dodaios.plugins.stt import build_stt_from_config
     from dodaios.plugins.tts import build_tts_from_config
@@ -296,6 +357,9 @@ def finish(info: dict[str, str]) -> None:
         raise RuntimeError("The installed app did not select Nemotron.")
     if build_tts_from_config(effective.tts).name != "piper-local":
         raise RuntimeError("The installed app did not select Piper.")
+    if _resolve_language(effective) != "fr-FR":
+        raise RuntimeError("The installed browser route did not select French.")
+    asyncio.run(check_brain(effective))
 
 
 def main() -> int:
@@ -303,12 +367,23 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true", help="activate French voice with backup")
     parser.add_argument("--finish", help=argparse.SUPPRESS)
     parser.add_argument("--probe", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--ready", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.probe:
         print(json.dumps(probe()))
         return 0
     if args.finish:
         finish(json.loads(args.finish))
+        return 0
+    if args.ready:
+        from dodaios.core.config import ensure_project_root_cwd, load_config
+        from dodaios.core.control_key import get_control_key
+
+        ensure_project_root_cwd()
+        url = f"http://127.0.0.1:{load_config().ui.admin_api_port}"
+        # Resolve the existing key in the service's environment and cwd. It
+        # stays inside this worker, never in stdout, environment or argv.
+        wait_for_voice_ready(url, token=get_control_key())
         return 0
     if sys.platform != "linux" or os.getuid() == 0:
         raise RuntimeError("Run as the BC-250 desktop user, using the Dodaios venv.")
@@ -353,13 +428,17 @@ def main() -> int:
         )
         run(["systemctl", "--user", "start", UNIT], env=env, cwd=working)
         run(["systemctl", "--user", "is-active", "--quiet", UNIT], env=env, cwd=working)
+        run(
+            [sys.executable, "-I", str(Path(__file__).resolve()), "--ready"],
+            env=env, cwd=working, timeout=110,
+        )
     except BaseException:
         try:
             status = rollback(saved, active=active, env=env, working=working)
         except Exception:
             raise RuntimeError(f"Automatic restore failed. Backup: {backup}") from None
         raise RuntimeError(f"Activation failed. {status} Backup: {backup}") from None
-    print(f"Native French engines validated; Dodaios service active. Backup: {backup}")
+    print(f"French engines and Claude response validated; backend ready. Backup: {backup}")
     print("Open Dodaios and start a voice conversation.")
     return 0
 

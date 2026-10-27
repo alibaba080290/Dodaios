@@ -10221,9 +10221,9 @@ class BrainManager:
             if fast:
                 chain.append((active, fast))
 
-        # Model-less local providers own model discovery. Keep the selected
-        # provider on the chain so its plugin can choose an installed model.
-        if not fast and not deep and active in ("ollama", "local-openai"):
+        # A registered provider may own its default model (local discovery or
+        # a subscription CLI's account default). Keep that choice on the chain.
+        if not fast and not deep and active in self._registry.available():
             chain.append((active, None))
 
         # 2. Explicit tier fallbacks from jarvis.toml. These must run before
