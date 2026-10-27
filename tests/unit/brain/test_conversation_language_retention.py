@@ -220,6 +220,15 @@ def test_a_forced_language_without_translations_is_pinned() -> None:
     assert "Turkish" in m._reply_language_directive()
 
 
+def test_french_configuration_survives_normalization_and_pins_the_brain() -> None:
+    from dodaios.brain.manager import normalize_reply_language
+
+    assert normalize_reply_language("fr") == "fr"
+    manager = _mgr()
+    manager.set_reply_language("fr")
+    assert "French" in manager._reply_language_directive()
+
+
 @pytest.mark.parametrize("lang", ["auto", "", "tr", "fr", "xx"])
 def test_provider_down_phrase_falls_back_to_english(lang: str) -> None:
     assert _provider_down_phrase(lang, 0) == _PROVIDER_DOWN_PHRASES["en"][0]
