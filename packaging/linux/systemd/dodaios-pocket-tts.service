@@ -1,0 +1,40 @@
+# Kyutai Pocket TTS server for Dodaios's "pocket-local" TTS provider.
+#
+# User unit, no root needed:
+#   install -Dm644 dodaios-pocket-tts.service ~/.config/systemd/user/dodaios-pocket-tts.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now dodaios-pocket-tts
+#
+# Dodaios reads the URL from [tts.pocket].url (default http://127.0.0.1:18765).
+# Override the port, language, voice, threads or venv in a drop-in
+# (systemctl --user edit dodaios-pocket-tts) rather than in this file.
+[Unit]
+Description=Kyutai Pocket TTS for Dodaios (loopback only)
+Documentation=https://github.com/kyutai-labs/pocket-tts
+
+[Service]
+Type=exec
+Environment=POCKET_TTS_VENV=%h/pocket-tts-test/.venv
+Environment=POCKET_TTS_PORT=18765
+Environment=POCKET_TTS_LANGUAGE=french
+Environment=POCKET_TTS_VOICE=estelle
+# Serve only what is already in the Hugging Face cache: no network at run time.
+Environment=HF_HUB_OFFLINE=1
+# Leave CPU for the speech recognizer and the local LLM.
+Environment=OMP_NUM_THREADS=4
+Environment=PYTHONUNBUFFERED=1
+# Fail clearly instead of crash-looping when another process holds the port.
+ExecStartPre=/usr/bin/bash -c 'if (exec 3<>/dev/tcp/127.0.0.1/${POCKET_TTS_PORT}) 2>/dev/null; then echo "port ${POCKET_TTS_PORT} already in use" >&2; exit 1; fi'
+ExecStart=/usr/bin/env ${POCKET_TTS_VENV}/bin/pocket-tts serve --host 127.0.0.1 --port ${POCKET_TTS_PORT} --language ${POCKET_TTS_LANGUAGE} --default-voice ${POCKET_TTS_VOICE}
+# Ready only once /health answers and one short synthesis has run (warm-up).
+ExecStartPost=/usr/bin/bash -c 'for _ in $(seq 1 150); do if curl -fsS -m 2 http://127.0.0.1:${POCKET_TTS_PORT}/health >/dev/null 2>&1; then exec curl -fsS -m 60 -o /dev/null -F text=Bonjour. http://127.0.0.1:${POCKET_TTS_PORT}/tts; fi; sleep 1; done; echo "Pocket TTS not healthy after 150 s" >&2; exit 1'
+TimeoutStartSec=200
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+# The model peaks around 1 GB resident; stop a runaway before it starves the host.
+MemoryHigh=1536M
+MemoryMax=2G
+
+[Install]
+WantedBy=default.target
