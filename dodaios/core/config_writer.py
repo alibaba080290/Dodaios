@@ -2151,6 +2151,14 @@ _TTS_DEFAULTS: dict[str, dict[str, str]] = {
         "voice_en": "vits-piper-en_US-ryan-medium",
         "language_code": "auto",
     },
+    "pocket-local": {
+        # The server loads ONE language model (French here), so the output
+        # language is pinned; a turn in another language goes to [tts].fallback.
+        "model": "",
+        "voice_de": "estelle",
+        "voice_en": "estelle",
+        "language_code": "fr-FR",
+    },
 }
 
 # Per-provider voice allowlist — when the existing voice does not match the
@@ -2171,6 +2179,16 @@ _VOICES_FOR_PROVIDER: dict[str, frozenset[str]] = {
             "vits-piper-es_ES-davefx-medium",
             "vits-piper-es_ES-sharvard-medium",
             "vits-piper-pt_PT-tugao-medium",
+        }
+    ),
+    # Any built-in Pocket voice is valid, not only the curated picker entries.
+    "pocket-local": frozenset(
+        {
+            "alba", "anna", "azelma", "bill_boerst", "caro_davy", "charles",
+            "cosette", "daan", "eponine", "estelle", "eve", "fantine", "george",
+            "giovanni", "jane", "javert", "jean", "juergen", "lola", "marius",
+            "mary", "michael", "paul", "peter_yearsley", "rafael", "stuart_bell",
+            "vera",
         }
     ),
     "gemini-flash-tts": frozenset(

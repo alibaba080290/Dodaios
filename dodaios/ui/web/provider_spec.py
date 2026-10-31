@@ -770,6 +770,26 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "the more natural-sounding option."
         ),
     ),
+    # Local, keyless TTS served by a separate loopback process
+    # (`pocket-tts serve`, see packaging/linux/systemd/dodaios-pocket-tts.service).
+    ProviderSpec(
+        id="pocket-local",
+        label="Pocket TTS French (on this machine)",
+        tier="tts",
+        auth_mode="none",
+        secret_keys=(),
+        dashboard_url=None,
+        signup_url=None,
+        supports_base_url=True,
+        default_base_url="http://127.0.0.1:18765",
+        credential_help=(
+            "Kyutai Pocket TTS, French model, running on this machine — no API "
+            "key, nothing sent anywhere. More natural than Piper, but needs its "
+            "own local server (the dodaios-pocket-tts user service, loopback "
+            "only). It speaks French only: set the fallback to Piper so other "
+            "languages, or a stopped server, still get a voice."
+        ),
+    ),
     # ── STT ───────────────────────────────────────────────────────────────
     ProviderSpec(
         id="openai-api",

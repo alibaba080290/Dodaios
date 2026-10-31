@@ -360,6 +360,23 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
             ]
         ),
     ),
+    # Pocket TTS (on-device, French model). Every built-in voice is accepted
+    # (POCKET_VOICES in dodaios/plugins/tts/pocket_local.py); this is the curated
+    # pick. Estelle is the model's native French voice and the server default;
+    # the others are voices from other datasets re-rendered by the French model.
+    "pocket-local": (
+        "voice",
+        _curated(
+            [
+                ("estelle", "Estelle — French, feminine (default)"),
+                ("fantine", "Fantine — feminine"),
+                ("eponine", "Éponine — feminine"),
+                ("charles", "Charles — masculine"),
+                ("paul", "Paul — masculine"),
+                ("george", "George — masculine"),
+            ]
+        ),
+    ),
     # ElevenLabs picks a VOICE ID (opaque hashes), so the curated list carries
     # human names as labels while the value stays the id. The picker's
     # "use custom" row lets a user paste their OWN voice id (e.g. a cloned

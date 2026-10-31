@@ -51,6 +51,9 @@ _OPENROUTER_TTS_ALIASES = frozenset({
 _INWORLD_ALIASES = frozenset({
     "inworld", "inworld-tts", "inworld_tts", "inworld-tts-2",
 })
+_POCKET_LOCAL_ALIASES = frozenset({
+    "pocket-local", "pocket-tts", "pocket_tts", "pocket",
+})
 
 # Credential candidates per TTS family — the (keyring_key, env_var) pairs that
 # hold a usable key, matching what each plugin's own key lookup reads. A fresh
@@ -120,6 +123,8 @@ def _canonical_tts_name(name: str) -> str:
         return "gemini-flash-tts"
     if n in _OPENROUTER_TTS_ALIASES:
         return "openrouter"
+    if n in _POCKET_LOCAL_ALIASES:
+        return "pocket-local"
     return n
 
 
@@ -790,6 +795,19 @@ def _build_provider(tts_cfg: Any, provider: str) -> Any:
             getattr(tts_cfg, "voice_en", None)
         )
         return PiperLocalTTS(gender=profile, speed=tts_cfg.speed)
+
+    if provider in _POCKET_LOCAL_ALIASES:
+        try:
+            from dodaios.plugins.tts.pocket_local import PocketLocalTTS
+        except ImportError as exc:
+            raise RuntimeError(
+                f"TTS provider 'pocket-local' configured, but the plugin is not "
+                f"importable: {exc}.",
+            ) from exc
+        # Talks to a loopback `pocket-tts serve`; [tts.pocket] holds the URL,
+        # language and timeouts. Pair it with fallback = "piper-local" so a
+        # stopped server degrades to the Piper voice instead of silence.
+        return PocketLocalTTS.from_config(tts_cfg)
 
     if provider in _VERTEX_TTS_ALIASES:
         try:
