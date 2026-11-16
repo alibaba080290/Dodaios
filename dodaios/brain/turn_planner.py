@@ -348,33 +348,37 @@ _MISSION_RE = re.compile(
     r"background task\w*|subagent\w*|sub-agent\w*|"
     r"hintergrund\w*|agente\w*|mision\w*)\b"  # i18n-allow: multilingual speech-input matching data
 )
-# A mission with a proper name or a space qualifier is public news, never one
-# of the assistant's own missions: "la mission Artemis II", "the Apollo
-# mission", "Artemis-II-Mission", "mission spatiale". Matched on the ORIGINAL
-# text, because only the capital tells a name from an ordinary word
-# (BC-250 2026-10-29: the latest news "de la mission Artemis II" was graded an
-# agent-mission question and never searched).
-_PUBLIC_MISSION_RE = re.compile(
-    # "mission Artemis", "Mission Apollo", "mission spatiale Artemis"
-    r"\b[Mm]issions?\s+(?:spatiale\s+|lunaire\s+)?(?:NASA\s+|ESA\s+)?[A-Z][a-z]\w*"
-    # "Artemis II mission", "Apollo 11 mission", "Artemis-II-Mission"
-    r"|\b[A-Z][a-z]\w*[\s-]+(?:[IVX]+|\d+)[\s-]+[Mm]ission\w*"
-    # "Apollo-Mission", "the Apollo mission"
-    r"|\b[A-Z][a-z]\w*-[Mm]ission\w*|\b[Tt]he\s+[A-Z][a-z]\w*\s+mission\w*"
-    # a space qualifier names a public mission on its own
-    r"|\b(?:[Mm]issions?\s+spatiales?|[Ss]pace\s+missions?|[Ll]unar\s+missions?|"
-    r"\w*[Rr]aumfahrtmission\w*|\w*[Mm]ondmission\w*|[Mm]isi[oó]n(?:es)?\s+espacial\w*)\b"  # i18n-allow: speech input
+# A name alone is insufficient: internal missions can share public names.
+_MISSION_INTERNAL_RE = re.compile(
+    r"\b(?:dodaios|jarvis|society|team|workspace|project|"
+    r"equipe|projet|confi\w*|deleg\w*|auftrag\w*|beauftragt\w*)\b"
+    r"|\b(?:relance\w*|restart|resume|launch|start|stop|cancel|delete)\b"
+    r"|\b(?:tu as|vous avez|you have|you)\s+(?:lance\w*|cree\w*|launch\w*|creat\w*)\b"
+)
+_MISSION_NEWS_RE = re.compile(
+    r"\b(?:news|latest|nachrichten|neueste\w*|actualite\w*|nouvelles|"
+    r"quoi de neuf|(?:passe|arrive)\w*)\b"
+)
+_PUBLIC_MISSION_NAME_RE = re.compile(
+    # Recognized public names or an explicit space qualifier; an arbitrary
+    # capitalized name is not proof that the mission is public.
+    r"\bmissions?\s+(?:artemis|apollo)\b"
+    r"|\b(?:artemis|apollo)[\s-]+(?:(?:[ivx]+|\d+)[\s-]+)?mission\w*"
+    r"|\bmissions?\s+(?:spatiale|lunaire)s?\b"
+    r"|\b(?:space|lunar)\s+missions?\b"
+    r"|\b(?:raumfahrt|mond)mission\w*"
 )
 
 
 def _mentions_assistant_mission(raw_text: str) -> bool:
-    """True when the text asks about the assistant's own missions or agents.
-
-    Named public missions are removed first, so a news question about one is
-    not graded as private mission state.
-    """
-    remainder = _PUBLIC_MISSION_RE.sub(" ", str(raw_text or ""))
-    return bool(_MISSION_RE.search(_normalize(remainder)))
+    """Keep ambiguous, owned or delegated missions on the internal route."""
+    normalized = _normalize(raw_text)
+    if _OWNERSHIP_RE.search(normalized) or _MISSION_INTERNAL_RE.search(normalized):
+        return bool(_MISSION_RE.search(normalized))
+    if not _MISSION_NEWS_RE.search(normalized):
+        return bool(_MISSION_RE.search(normalized))
+    remainder = _PUBLIC_MISSION_NAME_RE.sub(" ", normalized)
+    return bool(_MISSION_RE.search(remainder))
 
 
 _SKILL_RE = re.compile(
@@ -552,7 +556,7 @@ _DATE_TRIVIA_RE = re.compile(
 )
 
 _FOLLOW_UP_REFERENCE_RE = re.compile(
-    r"\b(?:that|there|those|them|inside|what else|findings?|results?|"
+    r"\b(?:that|there|those|them|inside|what else|findings?|results?|ce sujet|cette mission|"
     r"what (?:did|have) (?:you|it) (?:find|found)|found out|"
     r"da|darin|drin|dort|dazu|davon|darueber|was noch|"  # i18n-allow
     r"rausgefunden|herausgefunden|ergebnis(?:se)?|recherche|"  # i18n-allow
@@ -1021,6 +1025,9 @@ def plan_turn(
     weak_scan_text = _WELLBEING_RE.sub(" ", weak_scan_text)
 
     action_intent = bool(_ACTION_FALLBACK_RE.search(weak_scan_text))
+    # A French mission relaunch is an action, not just a status lookup.
+    if _MISSION_RE.search(normalized) and re.match(r"^relance(?:z)?\b", normalized):
+        action_intent = True
     if capability_registry is not None:
         # The registry sweep reads the SAME idiom-stripped text as the
         # fallback regex: a verb inside a suppressed idiom ("sprich mal mit
