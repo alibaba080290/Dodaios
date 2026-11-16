@@ -11342,40 +11342,57 @@ class BrainManager:
                         self._evidence_directive = public_fact_evidence_directive(_pf_evidence)
                         self._public_fact_prefetched = True
             elif not self._evidence_directive:
-                # A hosted model without tools (the print-mode Claude CLI) cannot
-                # search either (BC-250 2026-10-29: "je ne peux pas faire de
-                # recherche en direct ici" about the latest Artemis II news). Run
-                # the search for an explicitly fresh public fact and hand it the
-                # results; its own answer is never replaced afterwards. The cheap
-                # text check runs first: the capability probe builds the primary
-                # brain, which only a turn that needs a search may do.
                 from dodaios.brain.public_fact_gate import (
                     hosted_fresh_fact_query,
                     prefetch_public_fact_evidence,
                     public_fact_evidence_directive,
                 )
 
+                # Classify and check the effective catalog before constructing
+                # a provider. A filtered or shadowed tool never uses the global gateway.
+                def _search_authorized() -> bool:
+                    if SEARCH_TOOL not in self._live_tool_names():
+                        return False
+                    extra = getattr(_pf_override, "tools_extra", {})
+                    return SEARCH_TOOL not in extra or extra[SEARCH_TOOL] is self._tools.get(
+                        SEARCH_TOOL
+                    )
+
                 _pf_query = hosted_fresh_fact_query(
                     user_text,
                     provider=_pf_provider,
                     local_providers=LOCAL_PROVIDERS,
-                    previous_user_text=self._previous_user_turn_text(use_history=use_history),
-                    recent_user_texts=self._recent_user_turn_texts(2, use_history=use_history),
+                    tool_names=self._live_tool_names(),
                 )
-                if _pf_query is not None and not self._brain_can_call_tools(
-                    _pf_provider, self._fast_model(_pf_provider)
+                if (
+                    _pf_query is not None
+                    and _search_authorized()
+                    and not self._brain_can_call_tools(
+                        _pf_provider,
+                        getattr(_pf_override, "model", None) or self._fast_model(_pf_provider),
+                    )
                 ):
+                    from dodaios.core.protocols import SupervisorToolRequest
+
+                    context = dict(getattr(_pf_override, "tool_context", {}) or {})
+                    request = SupervisorToolRequest(
+                        trace_id=turn_trace_id,
+                        origin=str(context.get("tool_origin") or "brain_public_fact_grounding"),
+                        user_utterance=user_text,
+                        rationale="Fresh public facts for a provider without tools.",
+                        mission_id=context.get("mission_id"),
+                        worker_id=context.get("worker_id"),
+                        config_snapshot=context,
+                        cancel_token=context.get("cancel_token"),
+                    )
                     _pf_evidence = await prefetch_public_fact_evidence(
-                        _pf_query, trace_id=turn_trace_id
+                        _pf_query,
+                        trace_id=turn_trace_id,
+                        request=request,
+                        is_authorized=_search_authorized,
                     )
                     if _pf_evidence is not None:
                         self._evidence_directive = public_fact_evidence_directive(_pf_evidence)
-                        log.info(
-                            "Public-fact search: tool-less provider %s answers from a "
-                            "system-run %s",
-                            _pf_provider,
-                            SEARCH_TOOL,
-                        )
 
         # Phase 5 / ADR-0006: pre-call budget gate. Block rather than request
         # when cooldown is active or the task/daily budget is exhausted.

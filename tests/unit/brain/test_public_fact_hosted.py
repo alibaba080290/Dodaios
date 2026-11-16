@@ -40,7 +40,7 @@ ARTEMIS = "Recherche les dernières actualités de la mission Artemis deux et Ci
     ],
 )
 def test_fresh_public_facts_are_searched_for_a_tool_less_hosted_model(text: str) -> None:
-    query = hosted_fresh_fact_query(text, provider="claude-cli", local_providers=LOCAL_PROVIDERS)
+    query = hosted_fresh_fact_query(text, provider="claude-cli", tool_names=("search_web",), local_providers=LOCAL_PROVIDERS)
     assert query
 
 
@@ -55,11 +55,11 @@ def test_fresh_public_facts_are_searched_for_a_tool_less_hosted_model(text: str)
     ],
 )
 def test_evergreen_self_and_story_turns_are_left_to_the_hosted_model(text: str) -> None:
-    assert hosted_fresh_fact_query(text, provider="claude-cli", local_providers=LOCAL_PROVIDERS) is None
+    assert hosted_fresh_fact_query(text, provider="claude-cli", tool_names=("search_web",), local_providers=LOCAL_PROVIDERS) is None
 
 
 def test_local_providers_keep_their_own_stricter_path() -> None:
-    assert hosted_fresh_fact_query(ARTEMIS, provider="local-openai", local_providers=LOCAL_PROVIDERS) is None
+    assert hosted_fresh_fact_query(ARTEMIS, provider="local-openai", tool_names=("search_web",), local_providers=LOCAL_PROVIDERS) is None
 
 
 def test_a_vague_event_without_context_is_not_searched() -> None:
@@ -67,7 +67,7 @@ def test_a_vague_event_without_context_is_not_searched() -> None:
         hosted_fresh_fact_query(
             "tu as vu l'accident aujourd'hui ?",  # i18n-allow: French fixture
             provider="claude-cli",
-            local_providers=LOCAL_PROVIDERS,
+            tool_names=("search_web",), local_providers=LOCAL_PROVIDERS,
         )
         is None
     )

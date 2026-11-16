@@ -25,11 +25,11 @@ import json
 import logging
 import re
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 from uuid import UUID, uuid4
 
-from dodaios.brain.turn_planner import plan_turn
+from dodaios.brain.turn_planner import is_contextual_follow_up, plan_turn
 
 log = logging.getLogger(__name__)
 
@@ -249,6 +249,8 @@ async def prefetch_public_fact_evidence(
     trace_id: UUID | None = None,
     gateway: Any | None = None,
     timeout_s: float = PREFETCH_TIMEOUT_S,
+    request: Any | None = None,
+    is_authorized: Callable[[], bool] | None = None,
 ) -> str | None:
     """Run one search_web through the supervisor gateway; the results as text.
 
@@ -271,7 +273,7 @@ async def prefetch_public_fact_evidence(
             return None
         from dodaios.core.protocols import SupervisorToolRequest
 
-        request = SupervisorToolRequest(
+        request = request if request is not None else SupervisorToolRequest(
             trace_id=trace_id or uuid4(),
             origin="brain_public_fact_grounding",
             user_utterance=text,
@@ -283,6 +285,8 @@ async def prefetch_public_fact_evidence(
         # 2026-10-28: 2 of 8 back-to-back searches); one retry within the
         # same budget recovers it.
         for _attempt in range(_SEARCH_ATTEMPTS):
+            if is_authorized is not None and not is_authorized():
+                return None
             remaining = deadline - loop.time()
             if remaining <= 0:
                 return None
@@ -343,6 +347,7 @@ def hosted_fresh_fact_query(
     *,
     provider: str | None,
     local_providers: Iterable[str],
+    tool_names: Iterable[str],
     previous_user_text: str = "",
     recent_user_texts: Iterable[str] = (),
 ) -> str | None:
@@ -353,25 +358,39 @@ def hosted_fresh_fact_query(
     faire de recherche en direct ici"). Unlike the on-device rule, only an
     explicitly FRESH public fact is searched: a capable hosted model answers
     evergreen facts itself, and its answer is never replaced afterwards.
+
+    Conversation strings carry no public-provenance or authorization receipt.
+    Keep the history parameters for caller compatibility, but never use them
+    to classify or enrich this path's query. Referential requests need a new,
+    self-contained public subject; even public-looking history is untrusted.
     """
     name = (provider or "").strip().lower()
+    tools = tuple(tool_names)
+    if SEARCH_TOOL not in tools:
+        return None
     if not name or name in {p.strip().lower() for p in local_providers}:
         return None
     text = (user_text or "").strip()
     if not text or _SELF_OR_MATH_RE.search(_normalize(text)):
         return None
+    # Reuse the planner's reference detector with a fixed, non-user context.
+    # This detects a dependency; it does not certify any history as public.
+    # The shared multilingual vocabulary also treats "recherche" as a German
+    # reference noun. A leading French search imperative is not a reference.
+    reference_text = re.sub(r"^\s*recherche[sz]?\b", "", text, flags=re.IGNORECASE)
+    if is_contextual_follow_up(reference_text, ("unverified prior subject",)):
+        return None
     try:
         plan = plan_turn(
             text,
-            tool_names=(SEARCH_TOOL,),
-            context=(previous_user_text,) if previous_user_text else (),
+            tool_names=tools,
             requires_public_fact_grounding=False,
         )
     except Exception:  # noqa: BLE001 — a routing guard must never break a turn
         return None
     if not plan.requires_public_fact_grounding:
         return None
-    return public_fact_search_query(text, recent_user_texts)
+    return public_fact_search_query(text)
 
 
 _CLARIFY: dict[str, str] = {
