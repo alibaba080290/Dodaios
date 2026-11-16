@@ -378,9 +378,10 @@ def load_state(ctx: Ctx, session: str) -> dict:
     if not root or not session:
         return {}
     try:
-        return json.loads((root / "sessions" / f"{_safe(session)}.json").read_text("utf-8"))
+        state = json.loads((root / "sessions" / f"{_safe(session)}.json").read_text("utf-8"))
     except (OSError, ValueError):
         return {}
+    return state if isinstance(state, dict) else {}
 
 
 def save_state(ctx: Ctx, session: str, state: dict) -> None:
